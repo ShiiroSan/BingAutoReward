@@ -45,7 +45,7 @@ for (int p = 1; p < 3; p++)
     var context = await playwright.Chromium.LaunchPersistentContextAsync(@$"./BingAutoRewards{p}", new BrowserTypeLaunchPersistentContextOptions
     {
         Headless = true,
-        SlowMo = 500,
+        SlowMo = 750,
         UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.66 Safari/537.36 Edg/103.0.1264.44",
     });
     var page = context.Pages[0];
@@ -84,31 +84,78 @@ for (int p = 1; p < 3; p++)
         for (int i = 0; i < nbrElem; i++)
         {
             await cardElem.Nth(i).ClickAsync();
+
             Log.Debug("{i} clicked", i);
-        }
-        var allPages = context.Pages;
-        /*
-         * Starting in dec so we can close pages one after the other. 
-         * Stoping under 1 because we want to ignore page 0 (main reward page)
-         */
-        Log.Information($"Number of Pages open: {context.Pages.Count}");
-        Log.Information("Looking for poll on all pages...");
-        for (int i = allPages.Count - 1; i > 0; i--)
-        {
-            Log.Debug("Looking for Poll on Page {i}", i);
-            var PollElem = allPages[i].Locator("#btPollOverlay");
-            var nbrPoll = await PollElem.CountAsync();
-            if (nbrPoll > 0)
+            var cardPage = context.Pages[1];
+            await cardPage.WaitForLoadStateAsync(LoadState.Load);
+            Log.Debug($"Looking for Trivia on Page {i}");
+            if (await cardPage.Locator(".TriviaOverlayData").CountAsync() > 0) //Used to find if there's Quizz or stuff like that
             {
-                await PollElem.Locator("#btoption0").ClickAsync();
-                Log.Debug("Found poll and clicked first option.");
+                Log.Debug("Looking for Poll on Page {i}", i);
+                var PollElem = cardPage.Locator("#btPollOverlay");
+                var PollNum = await PollElem.CountAsync();
+                if (PollNum > 0)
+                {
+                    await PollElem.Locator("#btoption0").ClickAsync();
+                    Log.Debug("Found poll and clicked first option.");
+                }
+                else
+                    Log.Debug("No poll found.");
+
+                Log.Debug("Looking for Quiz on Page {i}", i);
+                var QuizWelcomeElem = cardPage.Locator("#quizWelcomeContainer"); //Not started Quiz
+                var QuizStartedElem = cardPage.Locator("#currentQuestionContainer"); //Started Quiz
+                if (QuizWelcomeElem != null || QuizStartedElem != null)
+                {
+                    Log.Debug("Found Quiz.");
+                    /**
+                     * Looks like the start quiz button isn't here all the time so we'll just check for it and move on
+                     * NVM I'm dumb we'll still check for it because I already programmed it so...
+                     **/
+                    if (await cardPage.Locator("#rqStartQuiz").CountAsync() == 1)
+                    {
+                        Log.Debug("Not started Quiz.");
+                        await cardPage.ClickAsync("#rqStartQuiz");
+                    }
+
+                    /**
+                     * Read position in quizz and count from already placed position
+                     **/
+                    var QuizPosHeaderElem = cardPage.Locator("#rqHeaderCredits");
+                    var QuizPosition = await QuizPosHeaderElem.Locator(".filledCircle").CountAsync();
+                    for (int quizzPos = QuizPosition; quizzPos < 4; quizzPos++)
+                    {
+                        Log.Debug($"Quiz is at pos: {QuizPosition}");
+                        var correctAnswerElem = cardPage.Locator("[iscorrectoption=True]");
+                        var CorrectAnswerNum = await correctAnswerElem.CountAsync();
+                        for (int j = 0; j < CorrectAnswerNum; j++)
+                        {
+                            await correctAnswerElem.Nth(j).ClickAsync();
+                            Log.Debug($"Clicked answer n°{j}/{CorrectAnswerNum} at Quiz step {QuizPosition}/3.");
+                        }
+                        await cardPage.WaitForLoadStateAsync(LoadState.Load);
+                    }
+                    Log.Debug($"Ended Quiz, yay!");
+                }
+                else
+                {
+                    Log.Debug("No quizz found.");
+                }
             }
+
             Log.Debug("Closing Page {i}...", i);
-            await allPages[i].CloseAsync();
+            await cardPage.CloseAsync();
+        }       
         }
 
-        var client = new HttpClient();
 
+    /**
+     * POSSIBLE IMPROVEMENT
+     * • Read already gotten score and determine how many searchs to do to make it right
+     * • Add a bit of randomization to make it more human
+     * • Don't do search if not needed (linked to 1st dot)
+     **/
+        var client = new HttpClient();
         if (AUTOSEARCHBINGDEF)
         {
             Log.Information("Starting autosearch desktop.");
@@ -120,6 +167,7 @@ for (int p = 1; p < 3; p++)
                 var searchURL = $"https://www.bing.com/search?q={randomWord}";
                 Log.Debug("Search n°{i}/30      {searchURL}", i + 1, searchURL);
                 await searchPage.GotoAsync(searchURL);
+                await searchPage.WaitForLoadStateAsync(LoadState.Load);
             }
             Log.Information("Ended autosearch desktop.");
         }
@@ -132,7 +180,7 @@ for (int p = 1; p < 3; p++)
             var contextMobile = await playwright.Chromium.LaunchPersistentContextAsync(@"C:\BingAutoRewards", new BrowserTypeLaunchPersistentContextOptions
             {
                 Headless = true,
-                SlowMo = 500,
+                SlowMo = 750,
                 UserAgent = "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.104 Mobile Safari/537.36",
             });
             Log.Information("Initiated mobile context.");
@@ -143,13 +191,13 @@ for (int p = 1; p < 3; p++)
                 var searchURL = $"https://www.bing.com/search?q={randomWord}";
                 Log.Debug("Search n°{i}/20      {searchURL}", i + 1, searchURL);
                 await contextMobile.Pages[0].GotoAsync(searchURL);
+                await contextMobile.Pages[0].WaitForLoadStateAsync(LoadState.Load);
             }
             Log.Information("Ended autosearch mobile.");
             Log.Information("Closing Mobile Context as it's not needed anymore");
             await contextMobile.CloseAsync();
         }
         Log.Information($"Done for profile {p}");
-    }
     playwright.Dispose();
 }
 Log.Information($"Done!");
