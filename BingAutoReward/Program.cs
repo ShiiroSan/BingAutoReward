@@ -7,20 +7,25 @@ using System.Diagnostics;
 /*TODO:
 • Replace those with Settings (YAML/JSON/???)
 • Add a way to specify the browser (Chromium/Firefox/???)
+• Add retries for Phone too. This part is boring as I'm coding like a dhead.
  */
 
 /**
- * As name is pretty clear actually I'll just explain what happen with different bool.
+ * As name is pretty clear actually I'll just explain what happen with different parameter.
  
  * • _isInDebug disable the headless mode and set a pause after logging so you can have access to the browser for anything you want. 
  * • _keepData enable the browser to keep the data after we did the job. More data disk cost and stuff but no need for relog at each test.
  *      _keepData is set to true by default.
  *      _keepData ISNT RECOMMENDED. As it basically go in "incognito mode" and it block many things for Quiz for example.
+ * • _maxRetry is the number of retry if some searchs failed. If this value is -1, it will try to search until we got the points, if 0 it will stop after the first try.
+ *      _maxRetry is set to 5 by default.
+ *      -1 isn't recommended. As it will try to search until we got the points, it could do infinite searchs.
   
  * All of these will be processed differently when Settings will be implemented.
 **/
-var _isInDebug = false;
-var _keepData = true;
+bool _isInDebug = true;
+bool _keepData = true;
+int _maxRetry = 5;
 /*
  * OFC this part need reworks with encryption and stuff like that. I honestly don't give a care about it. 
  * Implement it, nice. 
@@ -28,10 +33,10 @@ var _keepData = true;
  * 
  * I'm only doing it that way because I'm lazy and don't want to push it with my username/password in it. 
  */
-var ident = File.ReadLines("./id");
-var identList = ident.ToList();
-var identListPos = 0;
-var totalProfile = (identList.Count / 2);
+IEnumerable<string> ident = File.ReadLines("./id");
+List<string> identList = ident.ToList();
+int identListPos = 0;
+int totalProfile = (identList.Count / 2);
 
 
 Log.Logger = new LoggerConfiguration()
@@ -52,7 +57,7 @@ var wordsList = File.ReadAllLines("./words");
 st.Stop();
 Log.Information("Words list loaded in {0}ms.", st.ElapsedMilliseconds);
 
-var exitCode = Microsoft.Playwright.Program.Main(new[] { "install" });
+int exitCode = Microsoft.Playwright.Program.Main(new[] { "install" });
 if (exitCode != 0)
 {
     Log.Error($"Playwright exited with code {exitCode}");
@@ -65,7 +70,7 @@ for (int p = 1; p < totalProfile + 1; p++)
     bool AUTOSEARCHBINGDEF = true;
     bool AUTOSEARCHBINGMOBILE = false;
     Log.Information($"Running for profile {p}!");
-    using var playwright = await Playwright.CreateAsync();
+    using IPlaywright playwright = await Playwright.CreateAsync();
     IBrowserContext context;
     if (_keepData)
     {
@@ -78,10 +83,10 @@ for (int p = 1; p < totalProfile + 1; p++)
     }
     else
     {
-        var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+        IBrowser browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
         {
             Headless = !_isInDebug,
-            SlowMo = 750,
+            SlowMo = 1000,
         });
         context = await browser.NewContextAsync(new BrowserNewContextOptions
         {
@@ -90,7 +95,7 @@ for (int p = 1; p < totalProfile + 1; p++)
         await context.NewPageAsync();
     }
 
-    var page = context.Pages[0];
+    IPage page = context.Pages[0];
     await page.GotoAsync("https://rewards.microsoft.com/");
     if (page.Url.Contains("welcome"))
     {
@@ -126,7 +131,7 @@ for (int p = 1; p < totalProfile + 1; p++)
          * 
          * Connecting at each time will become part of the features. That allow for no PersistentContext stuff and that's nicer than how I do this actually.
          */
-        var dontShowAgainCBoxElem = page.Locator("[name=DontShowAgain]");
+        ILocator dontShowAgainCBoxElem = page.Locator("[name=DontShowAgain]");
         if (await dontShowAgainCBoxElem.CountAsync() != 0)
         {
             await dontShowAgainCBoxElem.ClickAsync();
@@ -139,22 +144,22 @@ for (int p = 1; p < totalProfile + 1; p++)
         Console.WriteLine("We are in debug. You can browse what you want and need and just press Play when you're done.");
         await page.PauseAsync();
     }
-    var cardElem = page.Locator(".rewards-card-container .mee-icon-AddMedium");
-    var nbrElem = await cardElem.CountAsync();
+    ILocator cardElem = page.Locator(".rewards-card-container .mee-icon-AddMedium");
+    int nbrElem = await cardElem.CountAsync();
     Log.Information("Number of reward card to click: {nbrElem}", nbrElem);
     for (int i = 0; i < nbrElem; i++)
     {
         await cardElem.Nth(i).ClickAsync();
 
         Log.Debug("{i} clicked", i);
-        var cardPage = context.Pages[1];
+        IPage cardPage = context.Pages[1];
         await cardPage.WaitForLoadStateAsync(LoadState.Load);
         Log.Debug("Looking for Trivia on Page {i}", i);
         if (await cardPage.Locator(".TriviaOverlayData").CountAsync() > 0) //Used to find if there's Quizz or stuff like that
         {
             Log.Debug("Looking for Poll on Page {i}", i);
-            var PollElem = cardPage.Locator("#btPollOverlay");
-            var PollNum = await PollElem.CountAsync();
+            ILocator PollElem = cardPage.Locator("#btPollOverlay");
+            int PollNum = await PollElem.CountAsync();
             if (PollNum > 0)
             {
                 await PollElem.Locator("#btoption0").ClickAsync();
@@ -164,8 +169,8 @@ for (int p = 1; p < totalProfile + 1; p++)
                 Log.Debug("No poll found.");
 
             Log.Debug("Looking for Quiz on Page {i}", i);
-            var QuizWelcomeElem = cardPage.Locator("#quizWelcomeContainer"); //Not started Quiz
-            var QuizStartedElem = cardPage.Locator("#currentQuestionContainer"); //Started Quiz
+            ILocator QuizWelcomeElem = cardPage.Locator("#quizWelcomeContainer"); //Not started Quiz
+            ILocator QuizStartedElem = cardPage.Locator("#currentQuestionContainer"); //Started Quiz
             if (await QuizWelcomeElem.CountAsync() != 0 || await QuizStartedElem.CountAsync() != 0)
             {
                 Log.Debug("Found Quiz.");
@@ -178,24 +183,53 @@ for (int p = 1; p < totalProfile + 1; p++)
                     Log.Debug("Not started Quiz.");
                     await cardPage.ClickAsync("#rqStartQuiz");
                 }
-
                 //Read position in quizz and count from already placed position
-                var QuizPosHeaderElem = cardPage.Locator("#rqHeaderCredits");
-                var QuizPosition = await QuizPosHeaderElem.Locator(".filledCircle").CountAsync();
-                for (int quizzPos = QuizPosition; quizzPos < 4; quizzPos++)
+                ILocator QuizPosHeaderElem = cardPage.Locator("#rqHeaderCredits");
+                int QuizPosition = await QuizPosHeaderElem.Locator(".filledCircle").CountAsync();
+
+
+                //TODO: Rework this part. It's not working as it should.
+                ILocator multiChoiceElem = cardPage.Locator(".textBasedMultiChoice");
+                if (await multiChoiceElem.CountAsync() != 0) //we are in multi choice quizz and that sucks
                 {
-                    Log.Debug("Quiz is at pos: {QuizPosition}", QuizPosition);
-                    var currentQuestion = cardPage.Locator("#currentQuestionContainer");
-                    var correctAnswerElem = currentQuestion.Locator("[iscorrectoption=True]");
-                    var CorrectAnswerNum = await correctAnswerElem.CountAsync();
-                    for (int j = 0; j < CorrectAnswerNum; j++)
+                    for (int quizzPos = QuizPosition; quizzPos < 4; quizzPos++)
                     {
-                        await correctAnswerElem.Nth(j).ClickAsync();
-                        Log.Debug("Clicked answer n°{j}/{CorrectAnswerNum}.",
-                            j + 1, CorrectAnswerNum);
+                        Log.Debug("Quiz is at pos: {QuizPosition}", QuizPosition);
+                        ILocator currentQuestion = cardPage.Locator("#currentQuestionContainer");
+                        ILocator answerElem = currentQuestion.Locator(".rq_button");
+                        int answerNum = await answerElem.CountAsync();
+                        int prevQuizPosition = QuizPosition;
+                        int j = 0;
+                        do
+                        {
+                            await answerElem.Nth(j).ClickAsync();
+                            Log.Debug("Tried answer n°{j}/{CorrectAnswerNum}.",
+                                j + 1, answerNum);
+                            await cardPage.WaitForLoadStateAsync(LoadState.Load);
+                            QuizPosition = await QuizPosHeaderElem.Locator(".filledCircle").CountAsync();
+                            j++;
+                        } while (j < 4 || prevQuizPosition != QuizPosition);
+                        prevQuizPosition = QuizPosition;
+                        await cardPage.WaitForLoadStateAsync(LoadState.Load);
                     }
-                    await cardPage.WaitForLoadStateAsync(LoadState.Load);
-                    QuizPosition = await QuizPosHeaderElem.Locator(".filledCircle").CountAsync();
+                }
+                else //normal quiz nice
+                {
+                    for (int quizzPos = QuizPosition; quizzPos < 4; quizzPos++)
+                    {
+                        Log.Debug("Quiz is at pos: {QuizPosition}", QuizPosition);
+                        ILocator currentQuestion = cardPage.Locator("#currentQuestionContainer");
+                        ILocator correctAnswerElem = currentQuestion.Locator("[iscorrectoption=True]");
+                        int CorrectAnswerNum = await correctAnswerElem.CountAsync();
+                        for (int j = 0; j < CorrectAnswerNum; j++)
+                        {
+                            await correctAnswerElem.Nth(j).ClickAsync();
+                            Log.Debug("Clicked answer n°{j}/{CorrectAnswerNum}.",
+                                j + 1, CorrectAnswerNum);
+                        }
+                        await cardPage.WaitForLoadStateAsync(LoadState.Load);
+                        QuizPosition = await QuizPosHeaderElem.Locator(".filledCircle").CountAsync();
+                    }
                 }
                 Log.Debug($"Ended Quiz, yay!");
             }
@@ -210,73 +244,93 @@ for (int p = 1; p < totalProfile + 1; p++)
     }
 
 
-    /* TODO: Add a bit of randomization to make it more human
+    /* TODO: 
+     * • Add a bit of randomization to make it more human
      */
     var profileLevel = await page.Locator(".level").AllInnerTextsAsync();
-    var profileLevelNumeric = int.Parse(System.Text.RegularExpressions.Regex.Match(profileLevel[0], @"\d+").Value);
+    int profileLevelNumeric = int.Parse(System.Text.RegularExpressions.Regex.Match(profileLevel[0], @"\d+").Value);
     int maxDesktopSearch = 30, maxMobileSearch = 20, initialDeskopSearchPos = 0, initialMobileSearchPos = 0;
 
     const int constPointsPerSearch = 3;
 
     Log.Information("Profile {p} is level {profileLevelNumeric}.", p, profileLevelNumeric);
-    var rawPointsCounter = page.Locator(".pointsDetail > .ng-binding");
-
-    var rawPointsComputerCounterText = await rawPointsCounter.Nth(0).InnerTextAsync();
-    var regexPointCounterComputer = System.Text.RegularExpressions.Regex.Matches(rawPointsComputerCounterText, @"([0-9]+)\s\/\s([0-9]+)");
-    initialDeskopSearchPos = int.Parse(regexPointCounterComputer[0].Groups[1].Value) / constPointsPerSearch;
-    maxDesktopSearch = int.Parse(regexPointCounterComputer[0].Groups[2].Value) / constPointsPerSearch;
-    //show debug max and initial search position
-    Log.Debug("Desktop search option: {initialDeskopSearchPos}/{maxDesktopSearch}.", initialDeskopSearchPos, maxDesktopSearch);
-
+    ILocator rawPointsCounter = page.Locator(".pointsDetail > .ng-binding");
     if (profileLevelNumeric == 2)
     {
-        var rawPointsMobileCounterText = await rawPointsCounter.Nth(1).InnerTextAsync();
-        var regexPointCounterMobile = System.Text.RegularExpressions.Regex.Matches(rawPointsMobileCounterText, @"([0-9]+)\s\/\s([0-9]+)");
-        initialMobileSearchPos = int.Parse(regexPointCounterMobile[0].Groups[1].Value) / constPointsPerSearch;
-        maxMobileSearch = int.Parse(regexPointCounterMobile[0].Groups[2].Value) / constPointsPerSearch;
-        //show debug max and initial search for mobile
-        Log.Debug("Mobile search option: {initialMobileSearchPos}/{maxMobileSearch}.", initialMobileSearchPos, maxMobileSearch);
-
         AUTOSEARCHBINGMOBILE = true;
         Log.Information("We'll do mobile search for profile {p}.", p);
-
     }
     Random rnd = new();
     var client = new HttpClient();
     if (AUTOSEARCHBINGDEF)
     {
-        Log.Information("Starting autosearch desktop.");
-        var searchPage = await context.NewPageAsync();
-        for (int i = initialDeskopSearchPos; i < maxDesktopSearch; i++)
+        int searchTry = 0;
+        String rawPointsComputerCounterText = await rawPointsCounter.Nth(0).InnerTextAsync();
+        System.Text.RegularExpressions.MatchCollection regexPointCounterComputer = System.Text.RegularExpressions.Regex.Matches(rawPointsComputerCounterText, @"([0-9]+)\s\/\s([0-9]+)");
+        initialDeskopSearchPos = int.Parse(regexPointCounterComputer[0].Groups[1].Value) / constPointsPerSearch;
+        maxDesktopSearch = int.Parse(regexPointCounterComputer[0].Groups[2].Value) / constPointsPerSearch;
+        Log.Debug("Desktop search option: {initialDeskopSearchPos}/{maxDesktopSearch}.", initialDeskopSearchPos, maxDesktopSearch);
+        while (searchTry < _maxRetry && initialDeskopSearchPos != maxDesktopSearch)
         {
-            string randomWord = wordsList[rnd.Next(wordsList.Length)];
-            var searchURL = $"https://www.bing.com/search?q={randomWord}";
-            Log.Debug("Search n°{i}/30      {searchURL}", i + 1, searchURL);
-            await searchPage.GotoAsync(searchURL);
-            await searchPage.WaitForLoadStateAsync(LoadState.Load);
+
+            if (regexPointCounterComputer[0].Groups[1].Value != regexPointCounterComputer[0].Groups[2].Value)
+            {
+                rawPointsComputerCounterText = await rawPointsCounter.Nth(0).InnerTextAsync();
+                regexPointCounterComputer = System.Text.RegularExpressions.Regex.Matches(rawPointsComputerCounterText, @"([0-9]+)\s\/\s([0-9]+)");
+                Log.Error("Some search didn't count!");
+                initialDeskopSearchPos = int.Parse(regexPointCounterComputer[0].Groups[1].Value) / constPointsPerSearch;
+                maxDesktopSearch = int.Parse(regexPointCounterComputer[0].Groups[2].Value) / constPointsPerSearch;
+                //show debug max and initial search position
+                Log.Debug("Desktop search option: {initialDeskopSearchPos}/{maxDesktopSearch}.", initialDeskopSearchPos, maxDesktopSearch);
+                Log.Debug("Number of search to do: {nbrToDo}", maxDesktopSearch - initialDeskopSearchPos);
+                Log.Information("Starting autosearch for desktop n°{searchTry}/{_maxRetry}.", searchTry, _maxRetry);
+                var searchPage = await context.NewPageAsync();
+                for (int i = initialDeskopSearchPos; i < maxDesktopSearch; i++)
+                {
+                    string randomWord = wordsList[rnd.Next(wordsList.Length)];
+                    string searchURL = $"https://www.bing.com/search?q={randomWord}";
+                    Log.Debug("Search n°{i}/{maxDesktopSearch}      {searchURL}", i + 1, maxDesktopSearch, searchURL);
+                    await searchPage.GotoAsync(searchURL);
+                    await searchPage.WaitForLoadStateAsync(LoadState.Load);
+                }
+                Log.Information("Ended autosearch n°{searchTry} desktop.", searchTry);
+            }
+            searchTry++;
         }
-        Log.Information("Ended autosearch desktop.");
     }
+    Log.Information("Ended autosearch desktop.");
     Log.Information("Closing Context as it's not needed anymore");
     await context.CloseAsync();
 
     if (AUTOSEARCHBINGMOBILE)
     {
         Log.Information("Starting autosearch for mobile.");
-        var contextMobile = await playwright.Chromium.LaunchPersistentContextAsync(@$".\BingAutoRewards{p}", new BrowserTypeLaunchPersistentContextOptions
+        IBrowserContext contextMobile = await playwright.Chromium.LaunchPersistentContextAsync(@$".\BingAutoRewards{p}", new BrowserTypeLaunchPersistentContextOptions
         {
             Headless = !_isInDebug,
-            SlowMo = 750,
+            SlowMo = 1000,
             UserAgent = "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.104 Mobile Safari/537.36",
         });
         Log.Information("Initiated mobile context.");
+        IPage pageMobile = contextMobile.Pages[0];
+        await pageMobile.GotoAsync("https://rewards.microsoft.com/");
+        await pageMobile.WaitForLoadStateAsync(LoadState.Load);
+        ILocator rawPointsCounterMobile = pageMobile.Locator(".pointsDetail > .ng-binding");
+
+        String rawPointsMobileCounterText = await rawPointsCounterMobile.Nth(1).InnerTextAsync();
+        System.Text.RegularExpressions.MatchCollection regexPointCounterMobile = System.Text.RegularExpressions.Regex.Matches(rawPointsMobileCounterText, @"([0-9]+)\s\/\s([0-9]+)");
+        initialMobileSearchPos = int.Parse(regexPointCounterMobile[0].Groups[1].Value) / constPointsPerSearch;
+        maxMobileSearch = int.Parse(regexPointCounterMobile[0].Groups[2].Value) / constPointsPerSearch;
+        //show debug max and initial search for mobile
+        Log.Debug("Mobile search option: {initialMobileSearchPos}/{maxMobileSearch}.", initialMobileSearchPos, maxMobileSearch);
+        await contextMobile.NewPageAsync();
         for (int i = initialMobileSearchPos; i < maxMobileSearch; i++)
         {
             string randomWord = wordsList[rnd.Next(wordsList.Length)];
-            var searchURL = $"https://www.bing.com/search?q={randomWord}";
+            string searchURL = $"https://www.bing.com/search?q={randomWord}";
             Log.Debug("Search n°{i}/20      {searchURL}", i + 1, searchURL);
-            await contextMobile.Pages[0].GotoAsync(searchURL);
-            await contextMobile.Pages[0].WaitForLoadStateAsync(LoadState.Load);
+            await contextMobile.Pages[1].GotoAsync(searchURL);
+            await contextMobile.Pages[1].WaitForLoadStateAsync(LoadState.Load);
         }
         Log.Information("Ended autosearch mobile.");
         Log.Information("Closing Mobile Context as it's not needed anymore");
