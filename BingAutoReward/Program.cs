@@ -182,158 +182,168 @@ for (int p = 1; p < totalProfile + 1; p++)
     var test = (await initialPointsElem.InnerTextAsync()).Replace("\u202F", "");
     int initialPoints = int.Parse(test);
     int newerPoints = 0;
-    ILocator cardElem = page.Locator(".rewards-card-container .mee-icon-AddMedium");
-    int nbrElem = await cardElem.CountAsync();
-    Log.Information("Number of reward card to click: {nbrElem}", nbrElem);
-    for (int i = 0; i < nbrElem; i++)
+    for (int cardTries = 0; cardTries < _maxRetry; cardTries++)
     {
-        await cardElem.Nth(i).ClickAsync();
-
-        Log.Debug("{i} clicked", i);
-        IPage cardPage = context.Pages[1];
-        await cardPage.WaitForLoadStateAsync(LoadState.Load);
-        Log.Debug("Looking for Trivia on Page {i}", i);
-        if (await cardPage.Locator(".TriviaOverlayData").CountAsync() > 0) //Used to find if there's Quizz or stuff like that
+        if (_maxRetry != 0 && cardTries != 0)
         {
-            Log.Debug("Looking for Poll on Page {i}", i);
-            ILocator PollElem = cardPage.Locator("#btPollOverlay");
-            int PollNum = await PollElem.CountAsync();
-            if (PollNum > 0)
-            {
-                await PollElem.Locator("#btoption0").ClickAsync();
-                Log.Debug("Found poll and clicked first option.");
-            }
-            else
-                Log.Debug("No poll found.");
+            Log.Information("Card tries: {cardTries}", cardTries);
+        }
+        ILocator cardElem = page.Locator(".rewards-card-container .mee-icon-AddMedium");
+        int nbrElem = await cardElem.CountAsync();
+        Log.Information("Number of reward card to click: {nbrElem}", nbrElem);
+        if (nbrElem == 0)
+        {
+            break;
+        }
+        for (int i = 0; i < nbrElem; i++)
+        {
+            await cardElem.Nth(i).ClickAsync();
 
-            Log.Debug("Looking for Quiz on Page {i}", i);
-            //ILocator QuizWelcomeElem = cardPage.Locator("#quizWelcomeContainer"); //Not started Quiz
-            ILocator QuizStartedElem = cardPage.Locator("#currentQuestionContainer"); //Started Quiz
-            if (/*await QuizWelcomeElem.CountAsync() != 0 || */await QuizStartedElem.CountAsync() != 0)
+            Log.Debug("{i} clicked", i);
+            IPage cardPage = context.Pages[1];
+            await cardPage.WaitForLoadStateAsync(LoadState.Load);
+            Log.Debug("Looking for Trivia on Page {i}", i);
+            if (await cardPage.Locator(".TriviaOverlayData").CountAsync() > 0) //Used to find if there's Quizz or stuff like that
             {
-                Log.Debug("Found Quiz.");
-                if (await cardPage.Locator("#rqStartQuiz").CountAsync() == 1)
+                Log.Debug("Looking for Poll on Page {i}", i);
+                ILocator PollElem = cardPage.Locator("#btPollOverlay");
+                int PollNum = await PollElem.CountAsync();
+                if (PollNum > 0)
                 {
-                    Log.Debug("Not started Quiz.");
-                    await cardPage.ClickAsync("#rqStartQuiz");
+                    await PollElem.Locator("#btoption0").ClickAsync();
+                    Log.Debug("Found poll and clicked first option.");
                 }
-                //based on https://github.com/charlesbel/Microsoft-Rewards-Farmer/blob/30c26d30ef0730183fe8bbda6ba24c1371b05e33/ms_rewards_farmer.py#L643
-                if (await cardPage.Locator(".bt_optionVS").CountAsync() != 0)
+                else
+                    Log.Debug("No poll found.");
+
+                Log.Debug("Looking for Quiz on Page {i}", i);
+                //ILocator QuizWelcomeElem = cardPage.Locator("#quizWelcomeContainer"); //Not started Quiz
+                ILocator QuizStartedElem = cardPage.Locator("#currentQuestionContainer"); //Started Quiz
+                if (/*await QuizWelcomeElem.CountAsync() != 0 || */await QuizStartedElem.CountAsync() != 0)
                 {
-                    Log.Debug("Found This or That Quiz.");
-                    var progressElem = cardPage.Locator(".bt_Quefooter");
-                    var progressText = await progressElem.InnerTextAsync();
-                    var match = Regex.Matches(progressText, @"\d+");
-                    var maxPos = int.Parse(match[1].Value);
-                    var actualPos = int.Parse(match[0].Value);
-                    for (int j = actualPos; j < maxPos + 1; j++)
+                    Log.Debug("Found Quiz.");
+                    if (await cardPage.Locator("#rqStartQuiz").CountAsync() == 1)
                     {
-                        Log.Debug("This or That Position : {j}/{maxPos}", j, maxPos);
-                        var possibleAnswer1 = cardPage.Locator("#rqAnswerOption0");
-                        var possibleAnswer2 = cardPage.Locator("#rqAnswerOption1");
-
-                        var encodedKey = await cardPage.EvaluateAsync<string>("_G.IG");
-                        Log.Debug("Encoded Answer: {encodedKey}", encodedKey);
-                        var answerCode = await cardPage.EvaluateAsync<string>("_w.rewardsQuizRenderInfo.correctAnswer");
-                        Log.Debug("Answer Code: {answerCode}", answerCode);
-
-                        var title1 = await possibleAnswer1.GetAttributeAsync("data-option");
-                        Log.Debug("Answer title 1: {title1}", title1);
-                        string decodedAnswer1 = "";
-                        if (title1 != null)
-                        {
-                            decodedAnswer1 = decodeAnswerBasedOnKey(encodedKey, title1);
-                            Log.Debug("Decoded Answer: {decodedAnswer1}", decodedAnswer1);
-                        }
-                        var title2 = await possibleAnswer2.GetAttributeAsync("data-option");
-                        Log.Debug("Answer title 2: {title2}", title2);
-                        string decodedAnswer2 = "";
-                        if (title2 != null)
-                        {
-                            decodedAnswer2 = decodeAnswerBasedOnKey(encodedKey, title2);
-                            Log.Debug("Decoded Answer: {decodedAnswer2}", decodedAnswer2);
-                        }
-                        //if decodedAnswer1 is equal to answerCode, click on possibleAnswer1 else if decodedAnswer2 is equal to answerCode click on possibleAnswer2
-                        if (decodedAnswer1 == answerCode)
-                        {
-                            Log.Debug("Click on {title1}.", title1);
-                            await possibleAnswer1.ClickAsync();
-                        }
-                        else if (decodedAnswer2 == answerCode)
-                        {
-                            Log.Debug("Click on {title2}.", title2);
-                            await possibleAnswer2.ClickAsync();
-                        }
-                        else
-                        {
-                            Log.Error("Answer not found.");
-                        }
-
-                        await cardPage.WaitForLoadStateAsync(LoadState.Load);
+                        Log.Debug("Not started Quiz.");
+                        await cardPage.ClickAsync("#rqStartQuiz");
                     }
+                    //based on https://github.com/charlesbel/Microsoft-Rewards-Farmer/blob/30c26d30ef0730183fe8bbda6ba24c1371b05e33/ms_rewards_farmer.py#L643
+                    if (await cardPage.Locator(".bt_optionVS").CountAsync() != 0)
+                    {
+                        Log.Debug("Found This or That Quiz.");
+                        var progressElem = cardPage.Locator(".bt_Quefooter");
+                        var progressText = await progressElem.InnerTextAsync();
+                        var match = Regex.Matches(progressText, @"\d+");
+                        var maxPos = int.Parse(match[1].Value);
+                        var actualPos = int.Parse(match[0].Value);
+                        for (int j = actualPos; j < maxPos + 1; j++)
+                        {
+                            Log.Debug("This or That Position : {j}/{maxPos}", j, maxPos);
+                            var possibleAnswer1 = cardPage.Locator("#rqAnswerOption0");
+                            var possibleAnswer2 = cardPage.Locator("#rqAnswerOption1");
+
+                            var encodedKey = await cardPage.EvaluateAsync<string>("_G.IG");
+                            Log.Debug("Encoded Answer: {encodedKey}", encodedKey);
+                            var answerCode = await cardPage.EvaluateAsync<string>("_w.rewardsQuizRenderInfo.correctAnswer");
+                            Log.Debug("Answer Code: {answerCode}", answerCode);
+
+                            var title1 = await possibleAnswer1.GetAttributeAsync("data-option");
+                            Log.Debug("Answer title 1: {title1}", title1);
+                            string decodedAnswer1 = "";
+                            if (title1 != null)
+                            {
+                                decodedAnswer1 = decodeAnswerBasedOnKey(encodedKey, title1);
+                                Log.Debug("Decoded Answer: {decodedAnswer1}", decodedAnswer1);
+                            }
+                            var title2 = await possibleAnswer2.GetAttributeAsync("data-option");
+                            Log.Debug("Answer title 2: {title2}", title2);
+                            string decodedAnswer2 = "";
+                            if (title2 != null)
+                            {
+                                decodedAnswer2 = decodeAnswerBasedOnKey(encodedKey, title2);
+                                Log.Debug("Decoded Answer: {decodedAnswer2}", decodedAnswer2);
+                            }
+                            //if decodedAnswer1 is equal to answerCode, click on possibleAnswer1 else if decodedAnswer2 is equal to answerCode click on possibleAnswer2
+                            if (decodedAnswer1 == answerCode)
+                            {
+                                Log.Debug("Click on {title1}.", title1);
+                                await possibleAnswer1.ClickAsync();
+                            }
+                            else if (decodedAnswer2 == answerCode)
+                            {
+                                Log.Debug("Click on {title2}.", title2);
+                                await possibleAnswer2.ClickAsync();
+                            }
+                            else
+                            {
+                                Log.Error("Answer not found.");
+                            }
+
+                            await cardPage.WaitForLoadStateAsync(LoadState.Load);
+                        }
+                    }
+                    else
+                    {
+                        Log.Debug("Found Normal Quiz.");
+                        //Read position in quizz and count from already placed position
+                        ILocator QuizPosHeaderElem = cardPage.Locator("#rqHeaderCredits");
+                        int QuizPosition = await QuizPosHeaderElem.Locator(".filledCircle").CountAsync();
+
+                        //TODO: Rework this part. It's not working as it should.
+                        ILocator multiChoiceElem = cardPage.Locator(".textBasedMultiChoice");
+                        if (await multiChoiceElem.CountAsync() != 0) //we are in multi choice quizz and that sucks
+                        {
+                            for (int quizzPos = QuizPosition; quizzPos < 4; quizzPos++)
+                            {
+                                var correctAnswer = await cardPage.EvaluateAsync<string>("_w.rewardsQuizRenderInfo.correctAnswer");
+                                Log.Debug("Quiz is at pos: {QuizPosition}", quizzPos);
+                                ILocator currentQuestion = cardPage.Locator("#currentQuestionContainer");
+                                ILocator answerElem = currentQuestion.Locator(".rq_button .rqOption");
+                                int answerNum = await answerElem.CountAsync();
+                                for (int j = 0; j < answerNum; j++)
+                                {
+                                    var buttonText = await answerElem.Nth(j).GetAttributeAsync("data-option");
+                                    if (buttonText == correctAnswer)
+                                    {
+                                        await answerElem.Nth(j).ClickAsync();
+                                        break;
+                                    }
+
+                                }
+                                await cardPage.WaitForLoadStateAsync(LoadState.Load);
+                            }
+                        }
+                        else //normal quiz nice
+                        {
+                            for (int quizzPos = QuizPosition; quizzPos < 4; quizzPos++)
+                            {
+                                Log.Debug("Quiz is at pos: {QuizPosition}", QuizPosition);
+                                ILocator currentQuestion = cardPage.Locator("#currentQuestionContainer");
+                                ILocator correctAnswerElem = currentQuestion.Locator("[iscorrectoption=True]");
+                                int CorrectAnswerNum = await correctAnswerElem.CountAsync();
+                                for (int j = 0; j < CorrectAnswerNum; j++)
+                                {
+                                    await correctAnswerElem.Nth(j).ClickAsync();
+                                    Log.Debug("Clicked answer n°{j}/{CorrectAnswerNum}.",
+                                        j + 1, CorrectAnswerNum);
+                                }
+                                await cardPage.WaitForLoadStateAsync(LoadState.Load);
+                                QuizPosition = await QuizPosHeaderElem.Locator(".filledCircle").CountAsync();
+                            }
+                        }
+                    }
+                    Log.Debug($"Ended Quiz, yay!");
                 }
                 else
                 {
-                    Log.Debug("Found Normal Quiz.");
-                    //Read position in quizz and count from already placed position
-                    ILocator QuizPosHeaderElem = cardPage.Locator("#rqHeaderCredits");
-                    int QuizPosition = await QuizPosHeaderElem.Locator(".filledCircle").CountAsync();
-
-                    //TODO: Rework this part. It's not working as it should.
-                    ILocator multiChoiceElem = cardPage.Locator(".textBasedMultiChoice");
-                    if (await multiChoiceElem.CountAsync() != 0) //we are in multi choice quizz and that sucks
-                    {
-                        for (int quizzPos = QuizPosition; quizzPos < 4; quizzPos++)
-                        {
-                            var correctAnswer = await cardPage.EvaluateAsync<string>("_w.rewardsQuizRenderInfo.correctAnswer");
-                            Log.Debug("Quiz is at pos: {QuizPosition}", quizzPos);
-                            ILocator currentQuestion = cardPage.Locator("#currentQuestionContainer");
-                            ILocator answerElem = currentQuestion.Locator(".rq_button .rqOption");
-                            int answerNum = await answerElem.CountAsync();
-                            for (int j = 0; j < answerNum; j++)
-                            {
-                                var buttonText = await answerElem.Nth(j).GetAttributeAsync("data-option");
-                                if (buttonText == correctAnswer)
-                                {
-                                    await answerElem.Nth(j).ClickAsync();
-                                    break;
-                                }
-
-                            }
-                            await cardPage.WaitForLoadStateAsync(LoadState.Load);
-                        }
-                    }
-                    else //normal quiz nice
-                    {
-                        for (int quizzPos = QuizPosition; quizzPos < 4; quizzPos++)
-                        {
-                            Log.Debug("Quiz is at pos: {QuizPosition}", QuizPosition);
-                            ILocator currentQuestion = cardPage.Locator("#currentQuestionContainer");
-                            ILocator correctAnswerElem = currentQuestion.Locator("[iscorrectoption=True]");
-                            int CorrectAnswerNum = await correctAnswerElem.CountAsync();
-                            for (int j = 0; j < CorrectAnswerNum; j++)
-                            {
-                                await correctAnswerElem.Nth(j).ClickAsync();
-                                Log.Debug("Clicked answer n°{j}/{CorrectAnswerNum}.",
-                                    j + 1, CorrectAnswerNum);
-                            }
-                            await cardPage.WaitForLoadStateAsync(LoadState.Load);
-                            QuizPosition = await QuizPosHeaderElem.Locator(".filledCircle").CountAsync();
-                        }
-                    }
+                    Log.Debug("No quizz found.");
                 }
-                Log.Debug($"Ended Quiz, yay!");
             }
-            else
-            {
-                Log.Debug("No quizz found.");
-            }
+
+            Log.Debug("Closing Page {i}...", i);
+            await cardPage.CloseAsync();
         }
-
-        Log.Debug("Closing Page {i}...", i);
-        await cardPage.CloseAsync();
     }
-
 
     /* TODO: 
      * • Add a bit of randomization to make it more human
@@ -356,7 +366,7 @@ for (int p = 1; p < totalProfile + 1; p++)
     {
         int searchTry = 0;
         String rawPointsComputerCounterText = await rawPointsCounter.Nth(0).InnerTextAsync();
-        System.Text.RegularExpressions.MatchCollection regexPointCounterComputer = Regex.Matches(rawPointsComputerCounterText, @"([0-9]+)\s\/\s([0-9]+)");
+        MatchCollection regexPointCounterComputer = Regex.Matches(rawPointsComputerCounterText, @"([0-9]+)\s\/\s([0-9]+)");
         initialDeskopSearchPos = int.Parse(regexPointCounterComputer[0].Groups[1].Value) / constPointsPerSearch;
         maxDesktopSearch = int.Parse(regexPointCounterComputer[0].Groups[2].Value) / constPointsPerSearch;
         Log.Debug("Desktop search option: {initialDeskopSearchPos}/{maxDesktopSearch}.", initialDeskopSearchPos, maxDesktopSearch);
