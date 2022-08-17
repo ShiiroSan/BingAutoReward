@@ -92,6 +92,10 @@ if (exitCode != 0)
  * 
  * I'm not sure if it's the best way to do it but it works.
  */
+
+//TODO: Add a way to know if a profile have Game Pass subscription and automatically "run" a game each day.
+//TODO: Port it to Linux so I can be ran on a VPS 😁 <- Mono doesn't work with .NET6, need to do a backward things.
+
 for (int p = 1; p < totalProfile + 1; p++)
 {
     List<string> rawListString = new();
@@ -187,6 +191,7 @@ for (int p = 1; p < totalProfile + 1; p++)
         if (_maxRetry != 0 && cardTries != 0)
         {
             Log.Information("Card tries: {cardTries}", cardTries);
+            await page.ReloadAsync();
         }
         ILocator cardElem = page.Locator(".rewards-card-container .mee-icon-AddMedium");
         int nbrElem = await cardElem.CountAsync();
