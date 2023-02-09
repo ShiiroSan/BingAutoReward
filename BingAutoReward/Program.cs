@@ -2,13 +2,13 @@
 using Microsoft.Playwright;
 using Serilog;
 using System.Diagnostics;
+using System.Text;
 using System.Text.RegularExpressions;
 using Telegram.Bot;
 
 /*TODO:
 • Replace those with Settings (YAML/JSON/???)
 • Add a way to specify the browser (Chromium/Firefox/???)
-• Add retries for Phone too. This part is boring as I'm coding like a dhead.
  */
 
 /**
@@ -68,6 +68,12 @@ var telegramBot = new TelegramBotClient(telegramBotToken.ToList()[0]);
 var _chatId = telegramBotToken.ToList()[1];
 var me = await telegramBot.GetMeAsync();
 
+AppDomain currentDomain = default;
+currentDomain = AppDomain.CurrentDomain;
+// Handler for unhandled exceptions.
+currentDomain.UnhandledException += GlobalUnhandledExceptionHandler;
+
+
 /*
  * I'm now using a dictionary of english words. Herokuapp I used before seems to banned me or somewhat. Was expected at some points tbh...
  */
@@ -84,7 +90,6 @@ if (exitCode != 0)
     Log.Error($"This is because Playwright wasn't installed I guess. Try restarting the program.");
     throw new Exception($"Playwright exited with code {exitCode}");
 }
-
 
 /*
  * This is the main loop.
@@ -104,6 +109,7 @@ for (int p = 1; p < totalProfile + 1; p++)
     Log.Information($"Running for profile {p}!");
     using IPlaywright playwright = await Playwright.CreateAsync();
     IBrowserContext context;
+    //TODO: Handle CultureInfo
     if (_keepData)
     {
         context = await playwright.Chromium.LaunchPersistentContextAsync(@$"./BingAutoRewards{p}", new BrowserTypeLaunchPersistentContextOptions
@@ -111,6 +117,7 @@ for (int p = 1; p < totalProfile + 1; p++)
             Headless = !_isInDebug,
             SlowMo = 1000,
             UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.66 Safari/537.36 Edg/103.0.1264.44",
+            //Locale = "en-GB"
         });
     }
     else
@@ -176,14 +183,30 @@ for (int p = 1; p < totalProfile + 1; p++)
         Console.WriteLine("We are in debug. You can browse what you want and need and just press Play when you're done.");
         await page.PauseAsync();
     }
-    ILocator profileNameElem = page.Locator(".c-heading-2");
+    ILocator profileNameElem = page.Locator(".l_header_right>a.additional_info");
     string profileName = await profileNameElem.InnerTextAsync();
     Log.Debug("Profile name: {profileName}", profileName);
     await telegramBot.SendTextMessageAsync(
     chatId: _chatId,
     text: $"Starting for {profileName}.");
-    ILocator initialPointsElem = page.Locator("mee-rewards-user-status-balance .number mee-rewards-counter-animation span");
+    var cultureInfo = page.Locator(".c-uhff-lang-selector");
+
+    ILocator initialPointsElem_New = page.Locator("mee-rewards-user-status-banner-balance .pointsValue mee-rewards-counter-animation span");
+    ILocator initialPointsElem_Old = page.Locator("mee-rewards-user-status-balance .number mee-rewards-counter-animation span");
+    ILocator initialPointsElem;
+    if (await initialPointsElem_New.CountAsync() != 0)
+        initialPointsElem = initialPointsElem_New;
+    else
+        initialPointsElem = initialPointsElem_Old;
+
+    Log.Debug("initalPoint hex: {hex}", Convert.ToHexString(Encoding.UTF8.GetBytes(await initialPointsElem.InnerTextAsync())));
+    Log.Debug("initalPoint str: {hex}", await initialPointsElem.InnerTextAsync());
     var test = (await initialPointsElem.InnerTextAsync()).Replace("\u202F", "");
+    //TODO: Handle CultureInfo in a better way. We won't force people to use a language they don't talk y'a know
+    if (test.Contains(","))
+    {
+        test = test.Replace(",", "");
+    }
     int initialPoints = int.Parse(test);
     int newerPoints = 0;
     for (int cardTries = 0; cardTries < _maxRetry; cardTries++)
@@ -203,6 +226,7 @@ for (int p = 1; p < totalProfile + 1; p++)
         for (int i = 0; i < nbrElem; i++)
         {
             await cardElem.Nth(i).ClickAsync();
+            Thread.Sleep(400);
 
             Log.Debug("{i} clicked", i);
             IPage cardPage = context.Pages[1];
@@ -353,24 +377,39 @@ for (int p = 1; p < totalProfile + 1; p++)
     /* TODO: 
      * • Add a bit of randomization to make it more human
      */
-    var profileLevel = await page.Locator(".level").AllInnerTextsAsync();
+    var profileLevel_New = page.Locator(".persona .profileDescription");
+    var profileLevel_Old = page.Locator(".level");
+    IReadOnlyList<string> profileLevel;
+    if (await profileLevel_New.CountAsync() != 0)
+        profileLevel = await profileLevel_New.AllInnerTextsAsync();
+    else
+        profileLevel = await profileLevel_Old.AllInnerTextsAsync();
+
     int profileLevelNumeric = int.Parse(Regex.Match(profileLevel[0], @"\d+").Value);
     int maxDesktopSearch = 30, maxMobileSearch = 20, initialDeskopSearchPos = 0, initialMobileSearchPos = 0;
 
     const int constPointsPerSearch = 3;
 
     Log.Information("Profile {p} is level {profileLevelNumeric}.", p, profileLevelNumeric);
-    ILocator rawPointsCounter = page.Locator(".pointsDetail > .ng-binding");
+    await page.GotoAsync("https://rewards.microsoft.com/pointsbreakdown");
+    ILocator rawPointsCounter = page.Locator(".pointsDetail.ng-binding");
     if (profileLevelNumeric == 2)
     {
         autoSearchMobile = true;
         Log.Information("We'll do mobile search for profile {p}.", p);
     }
     Random rnd = new();
+    var counterPos = 0;
     if (autoSearchDesktop)
     {
         int searchTry = 0;
-        String rawPointsComputerCounterText = await rawPointsCounter.Nth(0).InnerTextAsync();
+        await page.GotoAsync("https://rewards.microsoft.com/pointsbreakdown");
+
+        if (await rawPointsCounter.Nth(0).GetAttributeAsync("ng-if") == "!$ctrl.pointsSummary.isLevelTaskComplete")
+            counterPos++;
+
+        String rawPointsComputerCounterText = await rawPointsCounter.Nth(counterPos + 1).InnerTextAsync();
+
         MatchCollection regexPointCounterComputer = Regex.Matches(rawPointsComputerCounterText, @"([0-9]+)\s\/\s([0-9]+)");
         initialDeskopSearchPos = int.Parse(regexPointCounterComputer[0].Groups[1].Value) / constPointsPerSearch;
         maxDesktopSearch = int.Parse(regexPointCounterComputer[0].Groups[2].Value) / constPointsPerSearch;
@@ -383,7 +422,7 @@ for (int p = 1; p < totalProfile + 1; p++)
         {
             if (regexPointCounterComputer[0].Groups[1].Value != regexPointCounterComputer[0].Groups[2].Value)
             {
-                rawPointsComputerCounterText = await rawPointsCounter.Nth(0).InnerTextAsync();
+                rawPointsComputerCounterText = await rawPointsCounter.Nth(counterPos + 1).InnerTextAsync();
                 regexPointCounterComputer = Regex.Matches(rawPointsComputerCounterText, @"([0-9]+)\s\/\s([0-9]+)");
                 if (searchTry != 0)
                     Log.Error("Some search didn't count!");
@@ -404,6 +443,7 @@ for (int p = 1; p < totalProfile + 1; p++)
                     await searchPage.WaitForLoadStateAsync(LoadState.Load);
                 }
                 Log.Information("Ended autosearch n°{searchTry} desktop.", searchTry++);
+                searchTry++;
             }
             if (_maxRetry == int.MaxValue)
             {
@@ -421,7 +461,7 @@ for (int p = 1; p < totalProfile + 1; p++)
     {
         int searchTry = 0;
 
-        String rawPointsMobileCounterText = await rawPointsCounter.Nth(1).InnerTextAsync();
+        String rawPointsMobileCounterText = await rawPointsCounter.Nth(counterPos).InnerTextAsync();
         System.Text.RegularExpressions.MatchCollection regexPointCounterMobile = System.Text.RegularExpressions.Regex.Matches(rawPointsMobileCounterText, @"([0-9]+)\s\/\s([0-9]+)");
         initialMobileSearchPos = int.Parse(regexPointCounterMobile[0].Groups[1].Value) / constPointsPerSearch;
         maxMobileSearch = int.Parse(regexPointCounterMobile[0].Groups[2].Value) / constPointsPerSearch;
@@ -437,7 +477,7 @@ for (int p = 1; p < totalProfile + 1; p++)
             {
                 Headless = !_isInDebug,
                 SlowMo = 1000,
-                UserAgent = "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.104 Mobile Safari/537.36",
+                UserAgent = "Mozilla/5.0 (Linux; Android 12; Pixel 3 XL) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.101 Mobile Safari/537.36",
             });
             Log.Information("Initiated mobile context.");
             if (_maxRetry == -1)
@@ -448,11 +488,11 @@ for (int p = 1; p < totalProfile + 1; p++)
 
                 if (initialMobileSearchPos != maxMobileSearch)
                 {
-                    await pageMobile.GotoAsync("https://rewards.microsoft.com/");
+                    await pageMobile.GotoAsync("https://rewards.microsoft.com/pointsbreakdown");
                     await pageMobile.WaitForLoadStateAsync(LoadState.Load);
-                    ILocator rawPointsCounterMobile = pageMobile.Locator(".pointsDetail > .ng-binding");
+                    ILocator rawPointsCounterMobile = pageMobile.Locator(".pointsDetail.ng-binding");
 
-                    rawPointsMobileCounterText = await rawPointsCounterMobile.Nth(1).InnerTextAsync();
+                    rawPointsMobileCounterText = await rawPointsCounterMobile.Nth(counterPos).InnerTextAsync();
                     regexPointCounterMobile = Regex.Matches(rawPointsMobileCounterText, @"([0-9]+)\s\/\s([0-9]+)");
                     initialMobileSearchPos = int.Parse(regexPointCounterMobile[0].Groups[1].Value) / constPointsPerSearch;
                     maxMobileSearch = int.Parse(regexPointCounterMobile[0].Groups[2].Value) / constPointsPerSearch;
@@ -472,6 +512,7 @@ for (int p = 1; p < totalProfile + 1; p++)
                 }
                 else
                     Log.Information("No search to do for mobile.");
+                searchTry++;
                 if (_maxRetry == int.MaxValue)
                     searchTry = 0;
 
@@ -502,7 +543,13 @@ for (int p = 1; p < totalProfile + 1; p++)
         ILocator redeemInfoCard = page.Locator("mee-rewards-redeem-info-card");
         ILocator setGoalElem = redeemInfoCard.Locator("#dashboard-set-goal");
         ILocator progressGoal = setGoalElem.Locator(".c-progress");
-        ILocator pointsElem = page.Locator("mee-rewards-user-status-balance .number mee-rewards-counter-animation span");
+        ILocator PointsElem_New = page.Locator("mee-rewards-user-status-banner-balance .pointsValue mee-rewards-counter-animation span");
+        ILocator PointsElem_Old = page.Locator("mee-rewards-user-status-balance .number mee-rewards-counter-animation span");
+        ILocator pointsElem;
+        if (await PointsElem_New.CountAsync() != 0)
+            pointsElem = PointsElem_New;
+        else
+            pointsElem = PointsElem_Old;
         newerPoints = int.Parse((await pointsElem.InnerTextAsync()).Replace("\u202F", ""));
         Log.Information("Current points: {newerPoints} ({diffPoints})", newerPoints, newerPoints - initialPoints);
         if (await progressGoal.CountAsync() != 0)
@@ -544,6 +591,7 @@ for (int p = 1; p < totalProfile + 1; p++)
     playwright.Dispose();
 }
 Log.Information($"Done!");
+Console.ReadKey();
 
 
 //based on https://github.com/charlesbel/Microsoft-Rewards-Farmer/blob/30c26d30ef0730183fe8bbda6ba24c1371b05e33/ms_rewards_farmer.py#L262
@@ -556,4 +604,16 @@ static string decodeAnswerBasedOnKey(string key, string answer)
     }
     decodedAnswer += int.Parse(key[^2..], System.Globalization.NumberStyles.HexNumber);
     return decodedAnswer.ToString();
+}
+
+void GlobalUnhandledExceptionHandler(object sender, UnhandledExceptionEventArgs e)
+{
+    Exception ex = default;
+    ex = (Exception)e.ExceptionObject;
+    Log.Error(ex.Message + "\n" + ex.StackTrace);
+    //send log to telegram
+    telegramBot.SendTextMessageAsync(
+    chatId: _chatId,
+    text: ex.Message + "\n" + ex.StackTrace);
+
 }
